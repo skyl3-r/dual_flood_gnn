@@ -72,24 +72,52 @@ def convert_mesh(nc_file, output_root, run_id):
     # 1. GNN NODES = mesh faces/cells
     # ============================================================
 
-    face_x = ds["mesh2d_face_x"].values
-    face_y = ds["mesh2d_face_y"].values
+    face_x = ds["mesh2d_face_x"].values.astype(np.float64)
+    face_y = ds["mesh2d_face_y"].values.astype(np.float64)
+    node_x = ds["mesh2d_node_x"].values.astype(np.float64)
+    node_y = ds["mesh2d_node_y"].values.astype(np.float64)
+    node_z = ds["mesh2d_node_z"].values.astype(np.float64)
 
     n_faces = len(face_x)
 
     print(f"Number of GNN nodes / cells: {n_faces}")
 
+    # The dataset applies boundary conditions by removing ghost nodes and
+    # appending them again after processing.  D-Hydro has one flow boundary
+    # in these simulations, so represent each type-2 boundary face by one
+    # ghost node at the end of the node table.
+    edge_faces = ds["mesh2d_edge_faces"].values.astype(np.int64) - 1
+    edge_types_nc = ds["mesh2d_edge_type"].values.astype(np.int64)
+    edge_nodes = ds["mesh2d_edge_nodes"].values.astype(np.int64) - 1
+    mesh_edge_length = np.hypot(
+        node_x[edge_nodes[:, 1]] - node_x[edge_nodes[:, 0]],
+        node_y[edge_nodes[:, 1]] - node_y[edge_nodes[:, 0]],
+    )
+    bc_edge_ids = np.flatnonzero((edge_types_nc == 2) & np.any(edge_faces < 0, axis=1))
+    n_ghost = len(bc_edge_ids)
+
     node_geometries = [
         Point(float(x), float(y))
         for x, y in zip(face_x, face_y)
     ]
+    ghost_face_ids = edge_faces[bc_edge_ids, 1].copy()
+    for edge_id, face_id in zip(bc_edge_ids, ghost_face_ids):
+        node_geometries.append(Point(float(face_x[face_id]), float(face_y[face_id])))
+
+    face_elevation = np.empty(n_faces, dtype=np.float64)
+    face_nodes = ds["mesh2d_face_nodes"].values
+    for face_id, face_node_ids in enumerate(face_nodes):
+        valid = face_node_ids[np.isfinite(face_node_ids)].astype(np.int64) - 1
+        face_elevation[face_id] = np.mean(node_z[valid])
 
     nodes_gdf = gpd.GeoDataFrame(
         {
-            "node_id": np.arange(n_faces, dtype=np.int64),
-            "face_id": np.arange(n_faces, dtype=np.int64),
-            "x": face_x,
-            "y": face_y,
+            "X": np.r_[face_x, face_x[ghost_face_ids]],
+            "Y": np.r_[face_y, face_y[ghost_face_ids]],
+            "Elevation1": np.r_[face_elevation, face_elevation[ghost_face_ids]],
+            "node_type": np.r_[np.ones(n_faces, dtype=np.int64),
+                                np.full(n_ghost, 2, dtype=np.int64)],
+            "face_id": np.r_[np.arange(n_faces, dtype=np.int64), ghost_face_ids],
         },
         geometry=node_geometries,
         crs=None,
@@ -115,8 +143,6 @@ def convert_mesh(nc_file, output_root, run_id):
     # The NetCDF uses NaN for unused entries in a face.
     # ============================================================
 
-    face_nodes = ds["mesh2d_face_nodes"].values
-
     # Convert to zero-based indexing exactly as mSWE-GNN does.
     #
     # We handle NaNs before converting to int.
@@ -127,10 +153,10 @@ def convert_mesh(nc_file, output_root, run_id):
         valid_nodes = nodes[~np.isnan(nodes)].astype(np.int64) - 1
 
         # Get the actual mesh vertex coordinates.
-        node_x = ds["mesh2d_node_x"].values[valid_nodes]
-        node_y = ds["mesh2d_node_y"].values[valid_nodes]
+        polygon_node_x = node_x[valid_nodes]
+        polygon_node_y = node_y[valid_nodes]
 
-        coords = list(zip(node_x, node_y))
+        coords = list(zip(polygon_node_x, polygon_node_y))
 
         # Close polygon if necessary.
         if coords[0] != coords[-1]:
@@ -145,12 +171,18 @@ def convert_mesh(nc_file, output_root, run_id):
 
         cell_geometries.append(polygon)
 
+    cell_area_m2 = np.array([geom.area for geom in cell_geometries], dtype=np.float64)
+
     cells_gdf = gpd.GeoDataFrame(
         {
-            "cell_id": np.arange(n_faces, dtype=np.int64),
-            "face_id": np.arange(n_faces, dtype=np.int64),
+            "cell_id": np.arange(n_faces + n_ghost, dtype=np.int64),
+            "face_id": np.r_[np.arange(n_faces, dtype=np.int64), ghost_face_ids],
+            "area_m2": np.r_[cell_area_m2, np.zeros(n_ghost, dtype=np.float64)],
         },
-        geometry=cell_geometries,
+        # Ghost cells are removed before training, but the raw feature
+        # construction needs one zero-area record per ghost node.
+        geometry=cell_geometries + [cell_geometries[int(face_id)]
+                                    for face_id in ghost_face_ids],
         crs=None,
     )
 
@@ -176,20 +208,18 @@ def convert_mesh(nc_file, output_root, run_id):
     #
     # ============================================================
 
-    edge_faces = ds["mesh2d_edge_faces"].values
-
-    # Convert D-Hydro indexing to zero-based indexing.
-    edge_faces = edge_faces.astype(np.int64) - 1
-
-    # Remove boundary edges.
-    #
-    # A boundary mesh edge has one face and -1 for the other.
-    valid_mask = np.all(edge_faces >= 0, axis=1)
-
-    internal_edges = edge_faces[valid_mask]
+    # Keep internal edges and type-2 inflow edges. Closed boundaries are not
+    # graph edges; type-2 edges are connected to the appended ghost node.
+    internal_edge_ids = np.flatnonzero((edge_types_nc == 1) & np.all(edge_faces >= 0, axis=1))
+    selected_edge_ids = np.r_[internal_edge_ids, bc_edge_ids]
+    graph_faces = edge_faces[selected_edge_ids].copy()
+    for ghost_offset, edge_id in enumerate(bc_edge_ids):
+        row = np.flatnonzero(selected_edge_ids == edge_id)[0]
+        face_id = graph_faces[row, graph_faces[row] >= 0][0]
+        graph_faces[row] = [face_id, n_faces + ghost_offset]
 
     print(f"Raw mesh edges: {len(edge_faces)}")
-    print(f"Internal cell-cell edges: {len(internal_edges)}")
+    print(f"Internal cell-cell edges: {len(internal_edge_ids)}")
 
     # ============================================================
     # mSWE-GNN converts the dual graph to an undirected graph.
@@ -204,15 +234,13 @@ def convert_mesh(nc_file, output_root, run_id):
 
     undirected_edges = set()
 
-    for face_a, face_b in internal_edges:
+    for edge_id, (face_a, face_b) in zip(selected_edge_ids, graph_faces):
 
         if face_a == face_b:
             continue
 
-        a = int(min(face_a, face_b))
-        b = int(max(face_a, face_b))
-
-        undirected_edges.add((a, b))
+        # Keep one row per NetCDF edge: q1 is indexed by the primal edge.
+        undirected_edges.add((int(face_a), int(face_b), int(edge_id)))
 
     undirected_edges = sorted(undirected_edges)
 
@@ -223,17 +251,18 @@ def convert_mesh(nc_file, output_root, run_id):
     source_ids = []
     target_ids = []
 
-    for source, target in undirected_edges:
+    for source, target, nc_edge_id in undirected_edges:
 
         source_point = Point(
             float(face_x[source]),
             float(face_y[source])
         )
 
-        target_point = Point(
-            float(face_x[target]),
-            float(face_y[target])
-        )
+        if target < n_faces:
+            target_point = Point(float(face_x[target]), float(face_y[target]))
+        else:
+            target_point = Point(float(ds["mesh2d_edge_x"].values[nc_edge_id]),
+                                 float(ds["mesh2d_edge_y"].values[nc_edge_id]))
 
         edge_geometries.append(
             LineString([source_point, target_point])
@@ -242,14 +271,30 @@ def convert_mesh(nc_file, output_root, run_id):
         source_ids.append(source)
         target_ids.append(target)
 
+    dual_edge_lengths = np.array([g.length for g in edge_geometries], dtype=np.float64)
+    primal_edge_lengths = np.asarray([mesh_edge_length[nc_id]
+                                      for _, _, nc_id in undirected_edges], dtype=np.float64)
+    edge_source_elevation = np.asarray([face_elevation[source] for source, _, _ in undirected_edges])
+    edge_target_elevation = np.asarray([
+        face_elevation[target] if target < n_faces else face_elevation[source]
+        for source, target, _ in undirected_edges
+    ])
+
     edges_gdf = gpd.GeoDataFrame(
         {
-            "edge_id": np.arange(
-                len(undirected_edges),
-                dtype=np.int64
-            ),
-            "source": np.asarray(source_ids, dtype=np.int64),
-            "target": np.asarray(target_ids, dtype=np.int64),
+            "from_node": np.asarray(source_ids, dtype=np.int64),
+            "to_node": np.asarray(target_ids, dtype=np.int64),
+            # `length` is the dual (face-centre) distance. `fc_length` is
+            # the primal mesh-edge/interface length, matching mSWE-GNN.
+            "length": dual_edge_lengths,
+            "slope": np.divide(edge_source_elevation - edge_target_elevation,
+                                dual_edge_lengths,
+                                out=np.zeros_like(dual_edge_lengths),
+                                where=dual_edge_lengths > 0),
+            "fc_length": primal_edge_lengths,
+            "edge_type": np.asarray([2 if edge_types_nc[nc_id] == 2 else 1
+                                      for _, _, nc_id in undirected_edges], dtype=np.int64),
+            "nc_edge_id": np.asarray([nc_id for _, _, nc_id in undirected_edges], dtype=np.int64),
         },
         geometry=edge_geometries,
         crs=None,
@@ -312,6 +357,11 @@ def main():
 
     # Single-file mode: --input + --run-id
     if args.input:
+        if Path(args.input).is_dir():
+            parser.error(
+                "--input must point to one output_<run_id>_map.nc file; "
+                "use --input-dir for a directory"
+            )
         if args.run_id is None:
             parser.error("--run-id is required when using --input")
         if args.input_dir:

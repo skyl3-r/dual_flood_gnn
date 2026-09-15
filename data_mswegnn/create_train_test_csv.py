@@ -30,6 +30,7 @@ The split is hard-coded as requested:
 
 from pathlib import Path
 import pandas as pd
+import geopandas as gpd
 
 DATASET_DIR = Path(__file__).resolve().parent / 'datasets'
 RAW_DIR = DATASET_DIR / 'raw'
@@ -44,6 +45,28 @@ EVENT_FILE_KEYS = [
     'Cells_Shp_Filepath',
     'Hydrograph_Filepath',
 ]
+
+GEOMETRY_SCHEMA = {
+    'nodes': {'X', 'Y', 'Elevation1', 'node_type'},
+    'edges': {'from_node', 'to_node', 'length', 'slope', 'edge_type', 'fc_length', 'nc_edge_id'},
+    'cells': {'area_m2'},
+}
+
+def validate_geometry_schema(nodes_file: Path, edges_file: Path, cells_file: Path) -> None:
+    """Fail during dataset preparation if geometry was made by an old converter."""
+    files = {'nodes': nodes_file, 'edges': edges_file, 'cells': cells_file}
+    missing = {}
+    for kind, path in files.items():
+        columns = set(gpd.read_file(path, rows=0).columns)
+        absent = GEOMETRY_SCHEMA[kind] - columns
+        if absent:
+            missing[kind] = sorted(absent)
+    if missing:
+        details = ', '.join(f'{kind}: {", ".join(columns)}' for kind, columns in missing.items())
+        raise ValueError(
+            f'Geometry shapefiles are missing required columns ({details}). '
+            'Regenerate Geometry with convert_mswegnn_mesh.py, then rerun this script.'
+        )
 
 def main() -> None:
     if not RAW_DIR.exists():
@@ -73,6 +96,8 @@ def main() -> None:
         for p in [sim_file, nodes_file, edges_file, dem_file, cells_file, hydro_file]:
             if not p.exists():
                 raise FileNotFoundError(f'Missing expected file for run_id {run_id}: {p}')
+
+        validate_geometry_schema(nodes_file, edges_file, cells_file)
 
         rows.append({
             'Run_ID': run_id,
