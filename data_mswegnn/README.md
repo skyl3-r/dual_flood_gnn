@@ -106,3 +106,26 @@ Those files are the manifest files the model dataset readers expect.
 ## 5. Train DUALFloodGNN
 
 After the raw archive has been expanded into `datasets/raw/`, the geometry files have been produced, and the train/test CSVs have been created, you can proceed with the DUALFloodGNN training command from the repository root.
+
+## 5a. Check DEM coverage
+
+Before training, verify that the generated aspect rasters cover the real mesh
+face centres. Ghost nodes are excluded from this check:
+
+```bash
+python data_mswegnn/check_dem_coverage.py \
+  --start-run-id 1 \
+  --end-run-id 100 \
+  --require-all
+```
+
+The command reports the count and percentage of out-of-bounds face centres per
+run and overall. To enforce a threshold, add for example:
+
+```bash
+python data_mswegnn/check_dem_coverage.py \
+  --start-run-id 1 \
+  --end-run-id 100 \
+  --require-all \
+  --max-percent 1.0
+```
