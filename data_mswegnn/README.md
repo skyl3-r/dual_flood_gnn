@@ -60,33 +60,57 @@ cp -r datasets/raw/raw_datasets_mesh/* datasets/raw/
 rm -rf datasets/raw/raw_datasets_mesh
 ```
 
-## 3. Convert NetCDF mesh files to shapefile geometry
+## 3. Convert NetCDF meshes to shapefiles
 
-The mesh converter in `convert_mswegnn_mesh.py` supports two workflows:
+The converter always uses the historical mSWE-GNN loader workflow. It reads
+the standard `Simulations/`, `DEM/`, and `Hydrograph/` folders and writes to
+`Geometry/` automatically.
 
-- a single-file call
-- a batch conversion over a run-ID range
+Run the conversion commands below from this `data_mswegnn/` directory.
 
-For the full mesh suite, prefer the batch form:
+For one run, provide only its ID:
+
+```bash
+python convert_mswegnn_mesh.py --run-id 1
+```
+
+For each run, the NetCDF simulation, DEM, and hydrograph files are required:
+
+```text
+Simulations/output_<run_id>_map.nc
+DEM/DEM_<run_id>.xyz
+Hydrograph/Hydrograph_<run_id>.txt
+```
+
+The converter uses the NetCDF file for the mesh and edge connectivity, the DEM
+for cell elevations and terrain features, and the hydrograph to identify and
+verify the type-2 inflow boundary.
+
+For the full mesh suite, use a run-ID range:
 
 ```bash
 python convert_mswegnn_mesh.py \
-  --input-dir datasets/raw/Simulations \
-  --output datasets/raw/Geometry \
   --start-run-id 1 \
   --end-run-id 100
 ```
 
-That converts each `output_{run_id}_map.nc` into the required `Nodes/`, `Edges/`, and `Cells/` shapefile folders under the chosen output root. The converter writes one output set per run ID.
+Each run produces:
 
-You can also use the single-file invocation if you only need one simulation:
-
-```bash
-python convert_mswegnn_mesh.py \
-  --input datasets/raw/Simulations/output_1_map.nc \
-  --output datasets/raw/Geometry \
-  --run-id 1
+```text
+Geometry/
+  Nodes/nodes_<run_id>.shp
+  Edges/edges_<run_id>.shp
+  Cells/cells_<run_id>.shp
 ```
+
+Type-2 edges are verified against the hydrograph and represented as inflow
+ghost edges. Type-3 edges are represented as wall ghosts and removed by the
+historical boundary-condition pipeline. All NetCDF edges are exported in
+`mesh2d_q1` order so the original loader can consume them directly.
+
+The converter also writes mass-balance and inflow-detection diagnostics in the
+geometry output directory. The expected inflow-edge count can be changed with
+`--expected-inflow-edges`; use `-1` to disable that dataset-specific check.
 
 ## 4. Generate train/test CSV manifests
 
@@ -103,11 +127,23 @@ This writes:
 
 Those files are the manifest files the model dataset readers expect.
 
-## 5. Train DUALFloodGNN
+## 5. Verify and train
 
-After the raw archive has been expanded into `datasets/raw/`, the geometry files have been produced, and the train/test CSVs have been created, you can proceed with the DUALFloodGNN training command from the repository root.
+Run the boundary-pipeline regression test on representative runs:
 
-## 5a. Check DEM coverage
+```bash
+python test_original_boundary_pipeline.py \
+  --map-nc datasets/raw/Simulations/output_1_map.nc
+```
+
+Return to the repository root before training:
+
+```bash
+cd ..
+python train.py --config configs/mswegnn_config.yaml --model DUALFloodGNN
+```
+
+### Optional DEM coverage check
 
 Before training, verify that the generated aspect rasters cover the real mesh
 face centres. Ghost nodes are excluded from this check:

@@ -21,8 +21,3 @@ def get_face_length(filepath: str, dtype: np.dtype = np.float32) -> np.ndarray:
     columns = 'fc_length'
     data = read_shp_file_as_numpy(filepath=filepath, columns=columns)
     return data.astype(dtype)
-
-def get_nc_edge_ids(filepath: str, dtype: np.dtype = np.int64) -> np.ndarray:
-    """Return the source NetCDF edge index for each exported graph edge."""
-    data = read_shp_file_as_numpy(filepath=filepath, columns='nc_edge_id')
-    return data.astype(dtype)

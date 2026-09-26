@@ -12,7 +12,7 @@ from typing import Callable, List, Literal, Tuple
 from .hydrograph_data_retrieval import get_event_timesteps, get_inflow_hydrograph
 from .mswegnn_boundary_condition import mSWEGNNBoundaryCondition
 from .nc_data_retrieval import get_face_flow, get_water_depth
-from .shp_data_retrieval import get_node_types, get_edge_types, get_cell_area, get_face_length, get_nc_edge_ids
+from .shp_data_retrieval import get_node_types, get_edge_types, get_cell_area, get_face_length
 
 class mSWEGNNFloodEventDataset(FloodEventDataset):
     EVENT_FILE_KEYS = [*FloodEventDataset.EVENT_FILE_KEYS, 'Cells_Shp_Filepath', 'Hydrograph_Filepath']
@@ -209,14 +209,7 @@ class mSWEGNNFloodEventDataset(FloodEventDataset):
 
     def _get_dynamic_edge_features(self, event_idx: int) -> ndarray:
         def _get_face_flow(simulation_path: str, hydrograph_path: str, edges_shp_path: str):
-            # q1 is stored for every primal mesh edge.  The exported graph is
-            # the dual graph, so use the explicit NetCDF edge mapping emitted
-            # by convert_mswegnn_mesh.py.
-            all_face_flow = get_face_flow(simulation_path)
-            nc_edge_ids = get_nc_edge_ids(edges_shp_path)
-            if nc_edge_ids.size == 0 or nc_edge_ids.min() < 0 or nc_edge_ids.max() >= all_face_flow.shape[1]:
-                raise ValueError(f'Invalid nc_edge_id mapping in {edges_shp_path} for q1 shape {all_face_flow.shape}.')
-            face_flow = all_face_flow[:, nc_edge_ids]
+            face_flow = get_face_flow(simulation_path)
 
             # Overwrite boundary edge flows with inflow hydrograph
             # Found that the simulation output differs for the first timestep
