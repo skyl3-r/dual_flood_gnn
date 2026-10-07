@@ -39,6 +39,7 @@ def load_dataset(config: Dict, args: Namespace, logger: Logger) -> Tuple[FloodEv
         'time_from_peak': dataset_parameters['time_from_peak'],
         'inflow_boundary_nodes': dataset_parameters['inflow_boundary_nodes'],
         'outflow_boundary_nodes': dataset_parameters['outflow_boundary_nodes'],
+        'hierarchy_ratio': dataset_parameters.get('hierarchy_ratio'),
         'with_global_mass_loss': loss_func_parameters['use_global_mass_loss'],
         'with_local_mass_loss': loss_func_parameters['use_local_mass_loss'],
         'debug': args.debug,
@@ -200,6 +201,11 @@ def main():
         }
         model_config = {**model_params, **base_model_params}
         model = model_factory(args.model, **model_config)
+        if getattr(model, 'requires_hierarchy', False):
+            if train_dataset.hierarchy_ratio is None:
+                raise ValueError('HierarchicalDUALFloodGNN requires dataset_parameters.hierarchy_ratio (for example 0.1).')
+            if train_config['autoregressive'].get('enabled', False):
+                raise ValueError('HierarchicalDUALFloodGNN first version supports one-step training only; disable autoregressive training.')
         logger.log(f'Using model: {args.model}')
         logger.log(f'Using model configuration: {model_config}')
         num_train_params = model.get_model_size()
@@ -241,6 +247,7 @@ def main():
             'time_from_peak': dataset_parameters['time_from_peak'],
             'inflow_boundary_nodes': dataset_parameters['inflow_boundary_nodes'],
             'outflow_boundary_nodes': dataset_parameters['outflow_boundary_nodes'],
+            'hierarchy_ratio': dataset_parameters.get('hierarchy_ratio'),
             'debug': args.debug,
             'logger': logger,
             'force_reload': True,

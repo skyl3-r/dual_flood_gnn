@@ -36,7 +36,10 @@ class DualRegressionTrainer(NodeRegressionTrainer, EdgeRegressionTrainer):
 
                 batch = batch.to(self.device)
                 x, edge_index, edge_attr = batch.x, batch.edge_index, batch.edge_attr
-                pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
+                if getattr(self.model, 'requires_hierarchy', False):
+                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr, hierarchy=batch)
+                else:
+                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
                 pred_diff, edge_pred_diff = self._override_pred_bc(pred_diff, edge_pred_diff, batch)
 
                 pred_loss = self._compute_node_loss(pred_diff, batch)

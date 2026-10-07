@@ -62,7 +62,10 @@ class DualAutoregressiveTester(BaseTester):
                 edge_attr = torch.concat([graph.edge_attr[:, :self.start_edge_target_idx], edge_sliding_window, graph.edge_attr[:, self.end_edge_target_idx:]], dim=1)
                 edge_index = graph.edge_index
 
-                pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
+                if getattr(self.model, 'requires_hierarchy', False):
+                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr, hierarchy=graph)
+                else:
+                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
 
                 # Override boundary conditions in predictions
                 pred_diff[graph.boundary_nodes_mask] = graph.y[graph.boundary_nodes_mask]

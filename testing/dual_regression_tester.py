@@ -57,7 +57,10 @@ class DualRegressionTester(BaseTester):
                 graph = graph.to(self.device)
 
                 x, edge_index, edge_attr = graph.x, graph.edge_index, graph.edge_attr
-                pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
+                if getattr(self.model, 'requires_hierarchy', False):
+                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr, hierarchy=graph)
+                else:
+                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
 
                 # Override boundary conditions in predictions
                 pred_diff[graph.boundary_nodes_mask] = graph.y[graph.boundary_nodes_mask]

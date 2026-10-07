@@ -10,6 +10,7 @@ from .gin import GIN, EdgeGIN
 from .gine import GINE, EdgeGINE
 from .graphsage import GraphSAGE, EdgeGraphSAGE
 from .dual_flood_gnn import DUALFloodGNN
+from .hierarchical_dual_flood_gnn import HierarchicalDUALFloodGNN
 from .node_edge_gnn_transformer import NodeEdgeGNNTransformer
 from .node_edge_gnn_attn import NodeEdgeGNNAttn
 from .node_gnn import NodeGNN
@@ -17,6 +18,8 @@ from .node_gnn import NodeGNN
 def model_factory(model_name: str, *args, **kwargs) -> Module:
     if model_name == 'DUALFloodGNN':
         return DUALFloodGNN(*args, **kwargs)
+    if model_name == 'HierarchicalDUALFloodGNN':
+        return HierarchicalDUALFloodGNN(*args, **kwargs)
     if model_name == 'EdgeGAT':
         return EdgeGAT(*args, **kwargs)
     if model_name == 'EdgeGCN':
@@ -52,6 +55,7 @@ __all__ = [
     'BaseNodeModel',
     'BaseEdgeModel',
     'DUALFloodGNN',
+    'HierarchicalDUALFloodGNN',
     'EdgeGAT',
     'EdgeGCN',
     'EdgeGIN',

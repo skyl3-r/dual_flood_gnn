@@ -1,0 +1,80 @@
+# First-version one-level METIS hierarchical DUALFloodGNN configuration.
+# This deliberately uses one-step supervised training; autoregressive training
+# can be enabled after the hierarchical model is stable.
+
+dataset_parameters:
+  storage_mode: 'memory'
+  root_dir: 'data_mswegnn/datasets'
+  features_stats_file: 'features_stats.yaml'
+  previous_timesteps: 1
+  normalize: True
+  timestep_interval: 7200
+  spin_up_time: 0
+  time_from_peak: null
+  inflow_boundary_nodes: []
+  outflow_boundary_nodes: []
+  hierarchy_ratio: 0.1
+
+  training:
+    dataset_summary_file: 'train.csv'
+    event_stats_file: 'train_event_stats.yaml'
+
+  testing:
+    dataset_summary_file: 'test.csv'
+    event_stats_file: 'test_event_stats.yaml'
+
+training_parameters:
+  log_path: null
+  model_dir: 'saved_models'
+  stats_dir: 'training_stats'
+  checkpoint_path: null
+  num_epochs: 300
+  num_epochs_dyn_loss: 0
+  batch_size: 1
+  learning_rate: 9.0e-05
+  adam_weight_decay: 0
+  gradient_clip_value: 0.5
+  early_stopping_patience: 15
+  val_split_percent: 0.25
+
+  autoregressive:
+    enabled: false
+    init_num_timesteps: 1
+    total_num_timesteps: 1
+    timestep_increment: 1
+    max_curriculum_epochs: 1
+    learning_rate_decay: 0.5
+
+loss_func_parameters:
+  node_loss: 'mse'
+  edge_loss: 'mse'
+  node_loss_weight: 1.0
+  edge_pred_loss_scale: 0.561
+  edge_loss_weight: 0.7
+  use_global_mass_loss: false
+  global_mass_loss_scale: 1.0e-5
+  global_mass_loss_weight: 1.0
+  use_local_mass_loss: false
+  local_mass_loss_scale: 1.0e-5
+  local_mass_loss_weight: 1.0
+
+  huber:
+    delta: 0.15
+
+testing_parameters:
+  log_path: null
+  output_dir: 'saved_metrics'
+  rollout_start: 0
+  rollout_timesteps: null
+
+model_parameters:
+  HierarchicalDUALFloodGNN:
+    hidden_features: 64
+    num_layers: 3
+    activation: 'relu'
+    residual: true
+    mlp_layers: 3
+    encoder_layers: 3
+    encoder_activation: 'relu'
+    decoder_layers: 3
+    decoder_activation: 'relu'

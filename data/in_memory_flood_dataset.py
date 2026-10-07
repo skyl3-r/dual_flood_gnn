@@ -10,6 +10,7 @@ from torch_geometric.data import Data
 from typing import List
 
 from .flood_event_dataset import FloodEventDataset
+from .hierarchy import attach_hierarchy
 
 class InMemoryFloodDataset(FloodEventDataset):
     def __init__(self, *args, **kwargs):
@@ -85,6 +86,10 @@ class InMemoryFloodDataset(FloodEventDataset):
                     boundary_edges_mask=boundary_edges_mask,
                     global_mass_info=global_mass_info,
                     local_mass_info=local_mass_info)
+            if self.hierarchy_ratio is not None and 'cluster' in static_values:
+                attach_hierarchy(data, {key: torch.from_numpy(static_values[key]) for key in (
+                    'cluster', 'coarse_edge_index', 'coarse_edge_attr', 'cross_edge_index',
+                    'cross_edge_attr', 'num_supernodes')}, self.hierarchy_ratio)
 
             data_list.append(data)
 

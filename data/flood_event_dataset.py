@@ -18,6 +18,7 @@ from .shp_data_retrieval import get_edge_index, get_cell_elevation, get_edge_len
     get_edge_slope, get_cell_position_x, get_cell_position_y, get_cell_position
 from .boundary_condition import BoundaryCondition
 from .dataset_normalizer import DatasetNormalizer
+from .hierarchy import attach_hierarchy, build_hierarchy
 
 class FloodEventDataset(Dataset):
     EVENT_FILE_KEYS = ['Simulation_Filepath', 'Nodes_Shp_Filepath', 'Edges_Shp_Filepath', 'DEM_Filepath']
@@ -45,7 +46,8 @@ class FloodEventDataset(Dataset):
                  with_local_mass_loss: bool = True,
                  debug: bool = False,
                  logger: Optional[Logger] = None,
-                 force_reload: bool = False):
+                 force_reload: bool = False,
+                 hierarchy_ratio: Optional[float] = None):
         assert mode in ['train', 'test'], f'Invalid mode: {mode}. Must be "train" or "test".'
 
         self.log_func = print
@@ -68,6 +70,7 @@ class FloodEventDataset(Dataset):
         self.outflow_boundary_nodes = outflow_boundary_nodes
         self.with_global_mass_loss = with_global_mass_loss
         self.with_local_mass_loss = with_local_mass_loss
+        self.hierarchy_ratio = hierarchy_ratio
 
         # Dataset variables
         self.num_static_node_features = len(self.STATIC_NODE_FEATURES)
@@ -130,6 +133,7 @@ class FloodEventDataset(Dataset):
             dynamic_nodes = self._get_dynamic_node_features(event_idx)
             static_edges = self._get_static_edge_features(event_idx)
             dynamic_edges = self._get_dynamic_edge_features(event_idx)
+            hierarchy = None
 
             # Apply boundary conditions
             event_bc = self.boundary_conditions[event_idx]
@@ -140,6 +144,12 @@ class FloodEventDataset(Dataset):
             static_nodes, dynamic_nodes, static_edges, dynamic_edges, edge_index = event_bc.apply(
                 static_nodes, dynamic_nodes, static_edges, dynamic_edges, edge_index,
             )
+            if self.hierarchy_ratio is not None:
+                positions = self._get_node_positions(event_idx)
+                if positions is not None and len(positions) != len(static_nodes):
+                    positions = None
+                hierarchy = build_hierarchy(torch.from_numpy(edge_index).long(), static_nodes,
+                                            static_edges, positions, self.hierarchy_ratio)
 
             # Get physics-informed loss features
             node_rainfall_per_ts = self._get_physics_info(dynamic_nodes)
@@ -152,6 +162,7 @@ class FloodEventDataset(Dataset):
                 'static_edges': static_edges,
                 'dynamic_edges': dynamic_edges,
                 'node_rainfall_per_ts': node_rainfall_per_ts,
+                'hierarchy': hierarchy,
             }
 
             if self.mode == 'train' and self.is_normalized:
@@ -192,7 +203,9 @@ class FloodEventDataset(Dataset):
             np.savez(static_npz_path,
                      edge_index=event_data[event_idx]['edge_index'],
                      static_nodes=event_data[event_idx]['static_nodes'],
-                     static_edges=event_data[event_idx]['static_edges'])
+                     static_edges=event_data[event_idx]['static_edges'],
+                     **({k: v.cpu().numpy() for k, v in event_data[event_idx]['hierarchy'].items()}
+                        if event_data[event_idx]['hierarchy'] is not None else {}))
 
             np.savez(dynamic_npz_path,
                      event_timesteps=event_data[event_idx]['event_timesteps'],
@@ -273,6 +286,12 @@ class FloodEventDataset(Dataset):
                     boundary_edges_mask=boundary_edges_mask,
                     global_mass_info=global_mass_info,
                     local_mass_info=local_mass_info)
+
+        if self.hierarchy_ratio is not None and 'cluster' in static_values:
+            hierarchy = {key: torch.from_numpy(static_values[key]) for key in (
+                'cluster', 'coarse_edge_index', 'coarse_edge_attr', 'cross_edge_index',
+                'cross_edge_attr', 'num_supernodes')}
+            attach_hierarchy(data, hierarchy, self.hierarchy_ratio)
 
         return data
 
@@ -419,6 +438,9 @@ class FloodEventDataset(Dataset):
         paths = self._get_event_file_paths(event_idx)
         edge_index = get_edge_index(paths[self.EVENT_FILE_KEYS[2]])
         return edge_index
+
+    def _get_node_positions(self, event_idx: int) -> Optional[ndarray]:
+        return None
 
     def _get_event_timesteps(self, event_idx: int) -> ndarray:
         paths = self._get_event_file_paths(event_idx)

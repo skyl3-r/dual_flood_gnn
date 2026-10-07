@@ -24,7 +24,10 @@ class BaseTrainer:
                  val_dataset: Optional[FloodEventDataset] = None,
                  logger: Logger = None,
                  device: str = 'cpu'):
-        self.dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        # Hierarchy tensors are topology-specific. Keep one graph per batch in
+        # the first version; this also avoids mixing coarse-node index spaces.
+        effective_batch_size = 1 if getattr(model, 'requires_hierarchy', False) else batch_size
+        self.dataloader = DataLoader(dataset, batch_size=effective_batch_size, shuffle=True)
         self.model = model
         self.optimizer = optimizer
         self.loss_func = loss_func

@@ -21,6 +21,10 @@ class mSWEGNNFloodEventDataset(FloodEventDataset):
         super().__init__(*args, **kwargs)
         self.time_from_peak = None  # Currently not implemented in mSWEGNNFloodEventDataset
 
+    def _get_node_positions(self, event_idx: int) -> ndarray:
+        paths = self._get_event_file_paths(event_idx)
+        return get_cell_position(paths[self.EVENT_FILE_KEYS[1]])
+
     def _create_boundary_conditions(self, root_dir: str) -> List[BoundaryCondition]:
         bc_list = []
         for paths, run_id in zip(self.event_file_paths, self.event_run_ids):
