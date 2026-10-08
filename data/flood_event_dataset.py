@@ -145,9 +145,12 @@ class FloodEventDataset(Dataset):
                 static_nodes, dynamic_nodes, static_edges, dynamic_edges, edge_index,
             )
             if self.hierarchy_ratio is not None:
-                positions = self._get_node_positions(event_idx)
+                positions = self._get_hierarchy_node_positions(event_idx, event_bc)
                 if positions is not None and len(positions) != len(static_nodes):
-                    positions = None
+                    raise ValueError(
+                        f"Hierarchy positions have {len(positions)} nodes, "
+                        f"but processed graph has {len(static_nodes)} nodes for event {event_idx}."
+                    )
                 hierarchy = build_hierarchy(torch.from_numpy(edge_index).long(), static_nodes,
                                             static_edges, positions, self.hierarchy_ratio)
 
@@ -441,6 +444,31 @@ class FloodEventDataset(Dataset):
 
     def _get_node_positions(self, event_idx: int) -> Optional[ndarray]:
         return None
+
+    def _get_hierarchy_node_positions(self, event_idx: int, event_bc: BoundaryCondition) -> Optional[ndarray]:
+        """Return positions aligned with the graph after boundary processing.
+
+        Boundary processing removes ghost nodes and appends boundary nodes. The
+        appended nodes represent the original boundary cells, so their original
+        coordinates are appended in the same order as BoundaryCondition.apply.
+        """
+        positions = self._get_node_positions(event_idx)
+        if positions is None:
+            return None
+
+        positions = np.asarray(positions)
+        non_ghost_positions = np.delete(positions, event_bc.ghost_nodes, axis=0)
+        boundary_nodes = np.concatenate([
+            np.asarray(event_bc.init_inflow_boundary_nodes, dtype=np.int64),
+            np.asarray(event_bc.init_outflow_boundary_nodes, dtype=np.int64),
+        ])
+        if boundary_nodes.size == 0:
+            return non_ghost_positions
+
+        return np.concatenate([
+            non_ghost_positions,
+            positions[boundary_nodes],
+        ], axis=0)
 
     def _get_event_timesteps(self, event_idx: int) -> ndarray:
         paths = self._get_event_file_paths(event_idx)
