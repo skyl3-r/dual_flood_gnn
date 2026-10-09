@@ -2,7 +2,7 @@ import os
 
 from contextlib import redirect_stdout
 from torch import Tensor
-from testing import DualAutoregressiveTester
+from testing import DualRegressionTester
 from typing import Callable
 from utils import LossScaler, physics_utils, train_utils
 
@@ -101,7 +101,11 @@ class DualRegressionTrainer(NodeRegressionTrainer, EdgeRegressionTrainer):
         self._add_scaled_physics_loss_history()
 
     def validate(self):
-        val_tester = DualAutoregressiveTester(
+        # This trainer is used for one-step supervised training. Validation
+        # must use the same one-step protocol; an autoregressive tester would
+        # feed predictions back into later inputs and compound errors over the
+        # whole event rollout.
+        val_tester = DualRegressionTester(
             model=self.model,
             dataset=self.val_dataset,
             include_physics_loss=False,
