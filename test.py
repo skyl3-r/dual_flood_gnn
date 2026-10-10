@@ -8,7 +8,12 @@ from argparse import ArgumentParser, Namespace
 from constants import EDGE_MODELS, NODE_EDGE_MODELS
 from data import dataset_factory, FloodEventDataset
 from models import model_factory
-from testing import DualAutoregressiveTester, EdgeAutoregressiveTester, NodeAutoregressiveTester
+from testing import (
+    DualAutoregressiveTester,
+    DualRegressionTester,
+    EdgeAutoregressiveTester,
+    NodeAutoregressiveTester,
+)
 from typing import Dict, Optional
 from utils import Logger, file_utils
 
@@ -42,7 +47,8 @@ def run_test(model: torch.nn.Module,
              rollout_start: int = 0,
              rollout_timesteps: Optional[int] = None,
              output_dir: Optional[str] = None,
-             device: str = 'cpu'):
+             device: str = 'cpu',
+             autoregressive: bool = False):
     log_test_config = {'rollout_start': rollout_start, 'rollout_timesteps': rollout_timesteps}
     logger.log(f'Using testing configuration: {log_test_config}')
 
@@ -56,7 +62,9 @@ def run_test(model: torch.nn.Module,
         'device': device,
     }
 
-    if model.__class__.__name__ in NODE_EDGE_MODELS:
+    if not autoregressive and model.__class__.__name__ in NODE_EDGE_MODELS:
+        tester = DualRegressionTester(**tester_params)
+    elif model.__class__.__name__ in NODE_EDGE_MODELS:
         tester = DualAutoregressiveTester(**tester_params)
     elif model.__class__.__name__ in EDGE_MODELS:
         tester = EdgeAutoregressiveTester(**tester_params)
@@ -145,7 +153,8 @@ def main():
                  rollout_start=rollout_start,
                  rollout_timesteps=rollout_timesteps,
                  output_dir=output_dir,
-                 device=args.device)
+                 device=args.device,
+                 autoregressive=config['training_parameters']['autoregressive']['enabled'])
 
         logger.log('================================================')
     except Exception:
