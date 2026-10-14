@@ -37,6 +37,12 @@ class HierarchicalDUALFloodGNN(BaseModel):
                                                        hidden_features, mlp_layers, activation,
                                                        residual, False, self.device)
                                          for _ in range(num_layers)])
+        # Let coarse-informed fine nodes update the fine-edge states before
+        # the node and edge prediction heads are applied.
+        self.fine_refinement = NodeEdgeConv(hidden_features, hidden_features,
+                                            hidden_features, hidden_features,
+                                            hidden_features, mlp_layers, activation,
+                                            residual, False, self.device)
         self.cross_encoder = make_mlp(2, hidden_features, hidden_features,
                                       max(1, encoder_layers), encoder_activation,
                                       bias=False, device=self.device)
@@ -69,6 +75,7 @@ class HierarchicalDUALFloodGNN(BaseModel):
         cross_attr = self.cross_encoder(hierarchy.cross_edge_attr)
         up_messages = self.up_mlp(torch.cat([coarse_x[coarse_ids], x[fine_ids], cross_attr], dim=-1))
         x = x + scatter(up_messages, fine_ids, dim=0, dim_size=x.size(0), reduce='sum')
+        x, edge_attr = self.fine_refinement(x, edge_index, edge_attr)
         return self.node_decoder(x), self.edge_decoder(edge_attr)
 
     def _hierarchy_from_data(self):
