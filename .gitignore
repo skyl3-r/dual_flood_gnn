@@ -189,3 +189,4 @@ slurm-*.out
 
 # Extra
 _personal_tests.ipynb
+visualization/
