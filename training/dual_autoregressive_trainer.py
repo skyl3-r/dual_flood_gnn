@@ -55,7 +55,11 @@ class DualAutoregressiveTrainer(NodeAutoregressiveTrainer, EdgeAutoregressiveTra
             train_duration = train_end_time - train_start_time
             self.training_stats.log(f'\tEpoch Train Duration: {train_duration:.2f} seconds')
 
-            val_node_rmse, val_edge_rmse = self.validate()
+            # Evaluate at the same horizon currently used for training. This
+            # makes curriculum progression depend on convergence at the
+            # current rollout length rather than on an unrelated full-event
+            # rollout.
+            val_node_rmse, val_edge_rmse = self.validate(current_num_timesteps)
             self.training_stats.log(f'\n\tValidation Node RMSE: {val_node_rmse:.4e}')
             self.training_stats.log(f'\tValidation Edge RMSE: {val_edge_rmse:.4e}')
             self.training_stats.add_val_loss_component('val_node_rmse', val_node_rmse)
@@ -112,7 +116,12 @@ class DualAutoregressiveTrainer(NodeAutoregressiveTrainer, EdgeAutoregressiveTra
                 x = torch.concat([x[:, :self.start_node_target_idx], sliding_window, x[:, self.end_node_target_idx:]], dim=1)
                 edge_attr = torch.concat([edge_attr[:, :self.start_edge_target_idx], edge_sliding_window, edge_attr[:, self.end_edge_target_idx:]], dim=1)
 
-                pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
+                if getattr(self.model, 'requires_hierarchy', False):
+                    pred_diff, edge_pred_diff = self.model(
+                        x, edge_index, edge_attr, hierarchy=batch
+                    )
+                else:
+                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
                 pred_diff, edge_pred_diff = self._override_pred_bc(pred_diff, edge_pred_diff, batch, i)
 
                 pred_loss = self._compute_node_loss(pred_diff, batch, i)
@@ -167,7 +176,7 @@ class DualAutoregressiveTrainer(NodeAutoregressiveTrainer, EdgeAutoregressiveTra
 
         return epoch_loss, pred_epoch_loss, edge_pred_epoch_loss, global_mass_epoch_loss, local_mass_epoch_loss
 
-    def validate(self):
+    def validate(self, rollout_timesteps: int):
         self.model.eval()
 
         event_node_loss_list, event_edge_loss_list, event_global_loss_list, event_local_loss_list = [], [], [], []
@@ -178,36 +187,65 @@ class DualAutoregressiveTrainer(NodeAutoregressiveTrainer, EdgeAutoregressiveTra
         for event_idx in range(len(ds.event_run_ids)):
             with torch.no_grad():
                 event_start_idx = ds.event_start_idx[event_idx]
-                event_end_idx = ds.event_start_idx[event_idx + 1] if event_idx + 1 < len(ds.event_start_idx) else ds.total_rollout_timesteps
+                event_limit = ds.event_start_idx[event_idx + 1] if event_idx + 1 < len(ds.event_start_idx) else ds.total_rollout_timesteps
+                event_end_idx = min(event_start_idx + rollout_timesteps, event_limit)
                 event_dataset = ds[event_start_idx:event_end_idx]
                 dataloader = DataLoader(event_dataset, batch_size=1, shuffle=False) # Enforce batch size = 1 for autoregressive testing
 
                 node_loss_list, edge_loss_list, global_loss_list, local_loss_list = [], [], [], []
                 node_rmse_list, edge_rmse_list = [], []
 
-                sliding_window = event_dataset[0].x[:, self.start_node_target_idx:self.end_node_target_idx].clone()
-                edge_sliding_window = event_dataset[0].edge_attr[:, self.start_edge_target_idx:self.end_edge_target_idx].clone()
+                first_graph = event_dataset[0]
+                if first_graph.x.dim() == 3:
+                    # Hierarchical AR validation uses autoregressive-format
+                    # samples with a singleton horizon dimension.
+                    first_x = first_graph.x[:, :, 0]
+                    first_edge_attr = first_graph.edge_attr[:, :, 0]
+                else:
+                    # Preserve the existing validation format for ordinary
+                    # DUALFloodGNN autoregressive training.
+                    first_x = first_graph.x
+                    first_edge_attr = first_graph.edge_attr
+                sliding_window = first_x[:, self.start_node_target_idx:self.end_node_target_idx].clone()
+                edge_sliding_window = first_edge_attr[:, self.start_edge_target_idx:self.end_edge_target_idx].clone()
                 sliding_window, edge_sliding_window = sliding_window.to(self.device), edge_sliding_window.to(self.device)
                 for graph in dataloader:
                     # ========== Inference ==========
                     graph = graph.to(self.device)
 
-                    x = torch.concat([graph.x[:, :self.start_node_target_idx], sliding_window, graph.x[:, self.end_node_target_idx:]], dim=1)
-                    edge_attr = torch.concat([graph.edge_attr[:, :self.start_edge_target_idx], edge_sliding_window, graph.edge_attr[:, self.end_edge_target_idx:]], dim=1)
+                    # Hierarchical AR validation uses a singleton horizon;
+                    # ordinary DUALFloodGNN validation remains two-dimensional.
+                    if graph.x.dim() == 3:
+                        graph_x = graph.x[:, :, 0]
+                        graph_edge_attr = graph.edge_attr[:, :, 0]
+                        node_target = graph.y[:, :, 0]
+                        edge_target = graph.y_edge[:, :, 0]
+                    else:
+                        graph_x = graph.x
+                        graph_edge_attr = graph.edge_attr
+                        node_target = graph.y
+                        edge_target = graph.y_edge
+                    x = torch.concat([graph_x[:, :self.start_node_target_idx], sliding_window, graph_x[:, self.end_node_target_idx:]], dim=1)
+                    edge_attr = torch.concat([graph_edge_attr[:, :self.start_edge_target_idx], edge_sliding_window, graph_edge_attr[:, self.end_edge_target_idx:]], dim=1)
                     edge_index = graph.edge_index
 
-                    pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
+                    if getattr(self.model, 'requires_hierarchy', False):
+                        pred_diff, edge_pred_diff = self.model(
+                            x, edge_index, edge_attr, hierarchy=graph
+                        )
+                    else:
+                        pred_diff, edge_pred_diff = self.model(x, edge_index, edge_attr)
 
                     # Override boundary conditions in predictions
-                    pred_diff[graph.boundary_nodes_mask] = graph.y[graph.boundary_nodes_mask]
-                    edge_pred_diff[graph.boundary_edges_mask] = graph.y_edge[graph.boundary_edges_mask]
+                    pred_diff[graph.boundary_nodes_mask] = node_target[graph.boundary_nodes_mask]
+                    edge_pred_diff[graph.boundary_edges_mask] = edge_target[graph.boundary_edges_mask]
 
                     # ========== Training Losses ==========
-                    pred_loss = self.loss_func(pred_diff, graph.y)
+                    pred_loss = self.loss_func(pred_diff, node_target)
                     pred_loss = self._scale_node_pred_loss(epoch, pred_loss)
                     node_loss_list.append(pred_loss)
 
-                    edge_pred_loss = self.edge_loss_func(edge_pred_diff, graph.y_edge)
+                    edge_pred_loss = self.edge_loss_func(edge_pred_diff, edge_target)
                     edge_pred_loss = self._scale_edge_pred_loss(epoch, None, edge_pred_loss)
                     edge_loss_list.append(edge_pred_loss)
 
@@ -229,7 +267,7 @@ class DualAutoregressiveTrainer(NodeAutoregressiveTrainer, EdgeAutoregressiveTra
                     edge_sliding_window = torch.concat((edge_sliding_window[:, 1:], edge_pred), dim=1)
 
                     # ========== Validation Metrics ==========
-                    label = graph.x[:, [self.end_node_target_idx-1]] + graph.y
+                    label = graph_x[:, [self.end_node_target_idx-1]] + node_target
                     if ds.is_normalized:
                         pred = ds.normalizer.denormalize(ds.NODE_TARGET_FEATURE, pred)
                         label = ds.normalizer.denormalize(ds.NODE_TARGET_FEATURE, label)
@@ -246,7 +284,7 @@ class DualAutoregressiveTrainer(NodeAutoregressiveTrainer, EdgeAutoregressiveTra
                     node_rmse = metric_utils.RMSE(pred.cpu(), label.cpu())
                     node_rmse_list.append(node_rmse)
 
-                    label_edge = graph.edge_attr[:, [self.end_edge_target_idx-1]] + graph.y_edge
+                    label_edge = graph_edge_attr[:, [self.end_edge_target_idx-1]] + edge_target
                     if ds.is_normalized:
                         edge_pred = ds.normalizer.denormalize(ds.EDGE_TARGET_FEATURE, edge_pred)
                         label_edge = ds.normalizer.denormalize(ds.EDGE_TARGET_FEATURE, label_edge)

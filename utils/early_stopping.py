@@ -1,3 +1,5 @@
+import copy
+
 from torch import Tensor
 from torch.nn import Module
 from typing import Tuple, Union
@@ -40,4 +42,7 @@ class EarlyStopping:
 
     def save_checkpoint(self, model: Module) -> None:
         if self.restore_best_weights:
-            self.best_weights = model.state_dict().copy()
+            # A shallow copy leaves tensors aliased to the live model. Deep
+            # copy the state so later curriculum stages cannot overwrite the
+            # checkpoint that should be restored after convergence.
+            self.best_weights = copy.deepcopy(model.state_dict())

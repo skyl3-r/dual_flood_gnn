@@ -107,8 +107,21 @@ def load_dataset(config: Dict, args: Namespace, logger: Logger) -> Tuple[FloodEv
         'event_stats_file': val_event_stats_file,
         **base_datset_config,
     }
+    # The hierarchical dual trainer consumes autoregressive-format validation
+    # samples directly. The existing node/edge autoregressive testers use the
+    # ordinary one-step validation format, so keep their behavior unchanged.
+    hierarchical_autoregressive = (
+        autoregressive_enabled and args.model == 'HierarchicalDUALFloodGNN'
+    )
+    if hierarchical_autoregressive:
+        # Validation rolls through each event one graph at a time.  Keep one
+        # target timestep per graph while still using the autoregressive data
+        # representation ([elements, features, horizon]).
+        val_dataset_config.update({'num_label_timesteps': 1})
     logger.log(f'Using validation dataset configuration: {val_dataset_config}')
-    val_dataset = dataset_factory(storage_mode, autoregressive=False, **val_dataset_config)
+    val_dataset = dataset_factory(storage_mode,
+                                  autoregressive=hierarchical_autoregressive,
+                                  **val_dataset_config)
 
     logger.log(f'Loaded train dataset with {len(train_dataset)} samples and validation dataset with {len(val_dataset)} samples')
     return train_dataset, val_dataset
@@ -204,8 +217,6 @@ def main():
         if getattr(model, 'requires_hierarchy', False):
             if train_dataset.hierarchy_ratio is None:
                 raise ValueError('HierarchicalDUALFloodGNN requires dataset_parameters.hierarchy_ratio (for example 0.1).')
-            if train_config['autoregressive'].get('enabled', False):
-                raise ValueError('HierarchicalDUALFloodGNN first version supports one-step training only; disable autoregressive training.')
         logger.log(f'Using model: {args.model}')
         logger.log(f'Using model configuration: {model_config}')
         num_train_params = model.get_model_size()
