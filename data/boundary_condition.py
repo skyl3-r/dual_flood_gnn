@@ -2,7 +2,7 @@ import os
 import numpy as np
 
 from numpy import ndarray
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from .hecras_data_retrieval import get_min_cell_elevation
 
@@ -12,9 +12,12 @@ class BoundaryCondition:
                  simulation_file: str,
                  inflow_boundary_nodes: List[int],
                  outflow_boundary_nodes: List[int],
-                 saved_npz_file: str):
+                 saved_npz_file: str,
+                 processed_dir: Optional[str] = None):
         self.simulation_path = os.path.join(root_dir, 'raw', simulation_file)
-        self.saved_npz_path = os.path.join(root_dir, 'processed', saved_npz_file)
+        if processed_dir is None:
+            processed_dir = os.path.join(root_dir, 'processed')
+        self.saved_npz_path = os.path.join(processed_dir, saved_npz_file)
         self.init_inflow_boundary_nodes = inflow_boundary_nodes
         self.init_outflow_boundary_nodes = outflow_boundary_nodes
         self._init()

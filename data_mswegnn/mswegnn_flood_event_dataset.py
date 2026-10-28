@@ -35,7 +35,8 @@ class mSWEGNNFloodEventDataset(FloodEventDataset):
                                           nodes_shp_file=nodes_shp_path,
                                           inflow_boundary_nodes=None, # Set within class
                                           outflow_boundary_nodes=None, # Set within class
-                                          saved_npz_file=npz_filename)
+                                          saved_npz_file=npz_filename,
+                                          processed_dir=self.processed_dir)
             bc_list.append(bc)
         return bc_list
 

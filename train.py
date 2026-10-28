@@ -39,7 +39,7 @@ def load_dataset(config: Dict, args: Namespace, logger: Logger) -> Tuple[FloodEv
         'time_from_peak': dataset_parameters['time_from_peak'],
         'inflow_boundary_nodes': dataset_parameters['inflow_boundary_nodes'],
         'outflow_boundary_nodes': dataset_parameters['outflow_boundary_nodes'],
-        'hierarchy_ratio': dataset_parameters.get('hierarchy_ratio'),
+        'hierarchy_ratios': dataset_parameters.get('hierarchy_ratios'),
         'with_global_mass_loss': loss_func_parameters['use_global_mass_loss'],
         'with_local_mass_loss': loss_func_parameters['use_local_mass_loss'],
         'debug': args.debug,
@@ -215,8 +215,13 @@ def main():
         model_config = {**model_params, **base_model_params}
         model = model_factory(args.model, **model_config)
         if getattr(model, 'requires_hierarchy', False):
-            if train_dataset.hierarchy_ratio is None:
-                raise ValueError('HierarchicalDUALFloodGNN requires dataset_parameters.hierarchy_ratio (for example 0.1).')
+            if train_dataset.hierarchy_ratios is None:
+                raise ValueError('HierarchicalDUALFloodGNN requires dataset_parameters.hierarchy_ratios (for example [0.1, 0.1]).')
+            if len(train_dataset.hierarchy_ratios) != model.num_hierarchy_levels:
+                raise ValueError(
+                    f'Configured {len(train_dataset.hierarchy_ratios)} hierarchy ratios, '
+                    f'but model expects {model.num_hierarchy_levels} hierarchy levels.'
+                )
         logger.log(f'Using model: {args.model}')
         logger.log(f'Using model configuration: {model_config}')
         num_train_params = model.get_model_size()
@@ -258,7 +263,7 @@ def main():
             'time_from_peak': dataset_parameters['time_from_peak'],
             'inflow_boundary_nodes': dataset_parameters['inflow_boundary_nodes'],
             'outflow_boundary_nodes': dataset_parameters['outflow_boundary_nodes'],
-            'hierarchy_ratio': dataset_parameters.get('hierarchy_ratio'),
+            'hierarchy_ratios': dataset_parameters.get('hierarchy_ratios'),
             'debug': args.debug,
             'logger': logger,
             'force_reload': True,

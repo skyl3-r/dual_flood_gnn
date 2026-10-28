@@ -3,14 +3,17 @@ import numpy as np
 
 from numpy import ndarray
 from utils.file_utils import read_yaml_file, save_to_yaml_file
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, List, Literal, Tuple, Optional
 
 class DatasetNormalizer:
     EPS = 1e-7 # Prevent division by zero
 
-    def __init__(self, mode: Literal['train', 'test'], root_dir: str, features_stats_file: str):
+    def __init__(self, mode: Literal['train', 'test'], root_dir: str, features_stats_file: str,
+                 processed_dir: Optional[str] = None):
         self.mode = mode
-        self.feature_stats_path = os.path.join(root_dir, 'processed', features_stats_file)
+        if processed_dir is None:
+            processed_dir = os.path.join(root_dir, 'processed')
+        self.feature_stats_path = os.path.join(processed_dir, features_stats_file)
         if mode == 'test' and not os.path.exists(self.feature_stats_path):
             raise FileNotFoundError(f'Feature stats file not found at {self.feature_stats_path} for test mode. Training dataset must be processed first.')
         self.feature_stats = self.load_feature_stats()

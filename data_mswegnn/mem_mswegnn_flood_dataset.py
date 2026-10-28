@@ -86,10 +86,13 @@ class MemmSWEGNNFloodDataset(mSWEGNNFloodEventDataset):
                     boundary_edges_mask=boundary_edges_mask,
                     global_mass_info=global_mass_info,
                     local_mass_info=local_mass_info)
-            if self.hierarchy_ratio is not None and 'cluster' in static_values:
-                attach_hierarchy(data, {key: torch.from_numpy(static_values[key]) for key in (
-                    'cluster', 'coarse_edge_index', 'coarse_edge_attr', 'cross_edge_index',
-                    'cross_edge_attr', 'num_supernodes')}, self.hierarchy_ratio)
+            if self.hierarchy_ratios is not None and (
+                    'hierarchy_num_levels' in static_values or 'cluster' in static_values):
+                hierarchy = {key: torch.from_numpy(static_values[key]) for key in static_values.files
+                             if key.startswith('hierarchy_') or key in (
+                                 'cluster', 'coarse_edge_index', 'coarse_edge_attr',
+                                 'cross_edge_index', 'cross_edge_attr', 'num_supernodes')}
+                attach_hierarchy(data, hierarchy, self.hierarchy_ratios)
 
             data_list.append(data)
 

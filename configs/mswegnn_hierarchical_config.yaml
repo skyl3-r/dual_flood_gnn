@@ -3,9 +3,9 @@
 # can be enabled after the hierarchical model is stable.
 
 dataset_parameters:
-  storage_mode: 'memory'
-  root_dir: 'data_mswegnn/datasets'
-  features_stats_file: 'features_stats.yaml'
+  storage_mode: "memory"
+  root_dir: "data_mswegnn/datasets"
+  features_stats_file: "features_stats.yaml"
   previous_timesteps: 1
   normalize: True
   timestep_interval: 7200
@@ -13,20 +13,20 @@ dataset_parameters:
   time_from_peak: null
   inflow_boundary_nodes: []
   outflow_boundary_nodes: []
-  hierarchy_ratio: 0.1
+  hierarchy_ratios: [0.05]
 
   training:
-    dataset_summary_file: 'train.csv'
-    event_stats_file: 'train_event_stats.yaml'
+    dataset_summary_file: "train.csv"
+    event_stats_file: "train_event_stats.yaml"
 
   testing:
-    dataset_summary_file: 'test.csv'
-    event_stats_file: 'test_event_stats.yaml'
+    dataset_summary_file: "test.csv"
+    event_stats_file: "test_event_stats.yaml"
 
 training_parameters:
   log_path: null
-  model_dir: 'saved_models'
-  stats_dir: 'training_stats'
+  model_dir: "saved_models"
+  stats_dir: "training_stats"
   checkpoint_path: null
   num_epochs: 300
   num_epochs_dyn_loss: 0
@@ -46,8 +46,8 @@ training_parameters:
     learning_rate_decay: 0.5
 
 loss_func_parameters:
-  node_loss: 'mse'
-  edge_loss: 'mse'
+  node_loss: "mse"
+  edge_loss: "mse"
   node_loss_weight: 1.0
   edge_pred_loss_scale: 0.561
   edge_loss_weight: 0.7
@@ -63,7 +63,7 @@ loss_func_parameters:
 
 testing_parameters:
   log_path: null
-  output_dir: 'saved_metrics'
+  output_dir: "saved_metrics"
   rollout_start: 0
   rollout_timesteps: null
 
@@ -71,10 +71,11 @@ model_parameters:
   HierarchicalDUALFloodGNN:
     hidden_features: 64
     num_layers: 3
-    activation: 'relu'
+    num_hierarchy_levels: 1
+    activation: "relu"
     residual: true
     mlp_layers: 3
     encoder_layers: 3
-    encoder_activation: 'relu'
+    encoder_activation: "relu"
     decoder_layers: 3
-    decoder_activation: 'relu'
+    decoder_activation: "relu"

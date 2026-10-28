@@ -47,7 +47,7 @@ class FloodEventDataset(Dataset):
                  debug: bool = False,
                  logger: Optional[Logger] = None,
                  force_reload: bool = False,
-                 hierarchy_ratio: Optional[float] = None):
+                 hierarchy_ratios: Optional[List[float]] = None):
         assert mode in ['train', 'test'], f'Invalid mode: {mode}. Must be "train" or "test".'
 
         self.log_func = print
@@ -56,6 +56,7 @@ class FloodEventDataset(Dataset):
 
         # File paths
         self.event_file_paths, self.event_run_ids = self._get_events_from_summary(root_dir, dataset_summary_file)
+        self.root_dir = root_dir
         self.event_stats_file = event_stats_file
         self.features_stats_file = features_stats_file
 
@@ -70,7 +71,8 @@ class FloodEventDataset(Dataset):
         self.outflow_boundary_nodes = outflow_boundary_nodes
         self.with_global_mass_loss = with_global_mass_loss
         self.with_local_mass_loss = with_local_mass_loss
-        self.hierarchy_ratio = hierarchy_ratio
+        self.hierarchy_ratios = None if hierarchy_ratios is None else [float(r) for r in hierarchy_ratios]
+        self.hierarchy_cache_name = self._get_hierarchy_cache_name()
 
         # Dataset variables
         self.num_static_node_features = len(self.STATIC_NODE_FEATURES)
@@ -84,11 +86,25 @@ class FloodEventDataset(Dataset):
         self._event_base_timestep_interval = None
 
         # Helper classes
-        self.normalizer = DatasetNormalizer(mode, root_dir, features_stats_file)
+        self.normalizer = DatasetNormalizer(mode, root_dir, features_stats_file,
+                                            processed_dir=self.processed_dir)
         self.boundary_conditions = self._create_boundary_conditions(root_dir)
 
         force_reload = self._is_previous_config_different(processed_event_info) or force_reload
         super().__init__(root_dir, transform=None, pre_transform=None, pre_filter=None, log=debug, force_reload=force_reload)
+
+    def _get_hierarchy_cache_name(self) -> Optional[str]:
+        if self.hierarchy_ratios is None:
+            return None
+        ratios = '-'.join(str(r).replace('.', 'p') for r in self.hierarchy_ratios)
+        return f'hierarchy_v2_L{len(self.hierarchy_ratios)}_r{ratios}'
+
+    @property
+    def processed_dir(self):
+        base_dir = os.path.join(self.root_dir, 'processed')
+        if self.hierarchy_cache_name is None:
+            return base_dir
+        return os.path.join(base_dir, self.hierarchy_cache_name)
 
     @property
     def raw_file_names(self):
@@ -144,7 +160,7 @@ class FloodEventDataset(Dataset):
             static_nodes, dynamic_nodes, static_edges, dynamic_edges, edge_index = event_bc.apply(
                 static_nodes, dynamic_nodes, static_edges, dynamic_edges, edge_index,
             )
-            if self.hierarchy_ratio is not None:
+            if self.hierarchy_ratios is not None:
                 positions = self._get_hierarchy_node_positions(event_idx, event_bc)
                 if positions is not None and len(positions) != len(static_nodes):
                     raise ValueError(
@@ -152,7 +168,7 @@ class FloodEventDataset(Dataset):
                         f"but processed graph has {len(static_nodes)} nodes for event {event_idx}."
                     )
                 hierarchy = build_hierarchy(torch.from_numpy(edge_index).long(), static_nodes,
-                                            static_edges, positions, self.hierarchy_ratio)
+                                            static_edges, positions, self.hierarchy_ratios)
 
             # Get physics-informed loss features
             node_rainfall_per_ts = self._get_physics_info(dynamic_nodes)
@@ -290,16 +306,18 @@ class FloodEventDataset(Dataset):
                     global_mass_info=global_mass_info,
                     local_mass_info=local_mass_info)
 
-        if self.hierarchy_ratio is not None and 'cluster' in static_values:
-            hierarchy = {key: torch.from_numpy(static_values[key]) for key in (
-                'cluster', 'coarse_edge_index', 'coarse_edge_attr', 'cross_edge_index',
-                'cross_edge_attr', 'num_supernodes')}
-            attach_hierarchy(data, hierarchy, self.hierarchy_ratio)
+        if self.hierarchy_ratios is not None and (
+                'hierarchy_num_levels' in static_values or 'cluster' in static_values):
+            hierarchy = {key: torch.from_numpy(static_values[key]) for key in static_values.files
+                         if key.startswith('hierarchy_') or key in (
+                             'cluster', 'coarse_edge_index', 'coarse_edge_attr',
+                             'cross_edge_index', 'cross_edge_attr', 'num_supernodes')}
+            attach_hierarchy(data, hierarchy, self.hierarchy_ratios)
 
         return data
 
     def _load_event_stats(self, root_dir: str, event_stats_file: str) -> Tuple[List[int], int, Dict]:
-        event_stats_path = os.path.join(root_dir, 'processed', event_stats_file)
+        event_stats_path = os.path.join(self.processed_dir, event_stats_file)
         if not os.path.exists(event_stats_path):
             return [], 0, {}
 
@@ -314,6 +332,7 @@ class FloodEventDataset(Dataset):
             'time_from_peak': event_stats['time_from_peak'],
             'inflow_boundary_nodes': event_stats['inflow_boundary_nodes'],
             'outflow_boundary_nodes': event_stats['outflow_boundary_nodes'],
+            'hierarchy_ratios': event_stats.get('hierarchy_ratios'),
         }
         return event_start_idx, total_rollout_timesteps, processed_event_info
 
@@ -328,6 +347,7 @@ class FloodEventDataset(Dataset):
             'time_from_peak': self.time_from_peak,
             'inflow_boundary_nodes': self.inflow_boundary_nodes,
             'outflow_boundary_nodes': self.outflow_boundary_nodes,
+            'hierarchy_ratios': self.hierarchy_ratios,
         }
         save_to_yaml_file(self.processed_paths[0], event_stats)
 
@@ -362,7 +382,8 @@ class FloodEventDataset(Dataset):
                                    simulation_file=simulation_path,
                                    inflow_boundary_nodes=self.inflow_boundary_nodes,
                                    outflow_boundary_nodes=self.outflow_boundary_nodes,
-                                   saved_npz_file=npz_filename)
+                                   saved_npz_file=npz_filename,
+                                   processed_dir=self.processed_dir)
             bc_list.append(bc)
         return bc_list
 
@@ -390,6 +411,10 @@ class FloodEventDataset(Dataset):
             return True
         if set(processed_event_info['outflow_boundary_nodes']) != set(self.outflow_boundary_nodes):
             self.log_func(f'Previous outflow_boundary_nodes {processed_event_info["outflow_boundary_nodes"]} differs from current {self.outflow_boundary_nodes}. Reprocessing dataset.')
+            return True
+        previous_ratios = processed_event_info.get('hierarchy_ratios')
+        if previous_ratios != self.hierarchy_ratios:
+            self.log_func(f'Previous hierarchy_ratios {previous_ratios} differs from current {self.hierarchy_ratios}. Reprocessing dataset.')
             return True
         return False
 

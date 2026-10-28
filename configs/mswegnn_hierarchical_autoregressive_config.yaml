@@ -13,7 +13,7 @@ dataset_parameters:
   time_from_peak: null
   inflow_boundary_nodes: []
   outflow_boundary_nodes: []
-  hierarchy_ratio: 0.05
+  hierarchy_ratios: [0.05]
 
   training:
     dataset_summary_file: "train.csv"
@@ -71,6 +71,7 @@ model_parameters:
   HierarchicalDUALFloodGNN:
     hidden_features: 64
     num_layers: 3
+    num_hierarchy_levels: 1
     activation: "relu"
     residual: true
     mlp_layers: 3
